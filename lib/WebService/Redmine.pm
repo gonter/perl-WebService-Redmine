@@ -299,11 +299,51 @@ sub _set_client_error
 	return $self->_set_error($error);
 }
 
+sub export_wiki
+{
+  my $self= shift;
+  my $project_name= shift;
+	print __FILE__, ' ', __LINE__, " export_wiki: project_name=[$project_name] ", main::Dumper (\@_);
+
+	$self->_set_error;
+
+	my $r    = $self->_dispatch_name('wiki', $project_name, @_) // return;
+	print __FILE__, ' ', __LINE__, " export_wiki: r=[$r] ", main::Dumper ($r);
+
+	my $uri_str= sprintf('%s/projects/%s/wiki/export.html', $self->{uri}, $project_name);
+
+  return { project_name => $project_name, export_url => $uri_str };
+
+=begin comment
+
+Darn! the URL for a wiki export can not be retrieved with the API key
+
+	my $uri = URI->new($uri_str);
+	print __FILE__, ' ', __LINE__, " export_wiki: uri=[$uri]\n";
+
+	my $request = HTTP::Request->new($r->{method}, $uri);
+	my $response = $self->{ua}->request($request);
+	print __FILE__, ' ', __LINE__, " export_wiki: response=[$response]\n";
+
+	if (!$response->is_success) {
+	  return { status => 'error', error => $self->_set_error($response->status_line) };
+	}
+
+	my $content = $response->decoded_content;
+	return { status => 'ok', content => $content };
+
+=end comment
+=cut
+
+}
+
 sub AUTOLOAD
 {
 	our $AUTOLOAD;
+
 	my $self   = shift;
 	my $method = substr($AUTOLOAD, length(__PACKAGE__) + 2);
+	print __FILE__, ' ', __LINE__, " AUTOLOAD=[$AUTOLOAD] method=[$method]\n";
 	return if $method eq 'DESTROY';
 	return $self->_response($self->_request($method, @_));
 }
@@ -316,6 +356,7 @@ sub _request
 	$self->_set_error;
 
 	my $uri = URI->new(sprintf('%s/%s.json', $self->{uri}, $r->{path}));
+
 	if ($r->{method} eq 'GET' && ref $r->{query} eq 'HASH') {
 		foreach my $param (keys %{ $r->{query} }) {
 			# 2DO: implement passing arrays as foo=1&foo=2&foo=3 if needed
@@ -341,6 +382,8 @@ sub _response
 {
 	my $self     = shift;
 	my $request  = shift // return;
+
+	print __FILE__, ' ', __LINE__, ' request: ', main::Dumper ($request);
 	my $response = $self->{ua}->request($request);
 
 	if (!$response->is_success) {
@@ -391,6 +434,7 @@ sub _dispatch_name
 		delete => 'DELETE',
 	);
 
+print __FILE__, ' ', __LINE__, " _dispatch_name: action=[$action] objects=[$objects] args: ", main::Dumper (\@args);
 	my $data = {
 		method  => $METHOD{$action},
 		path    =>    '',
@@ -416,23 +460,35 @@ sub _dispatch_name
 	delete $self->{expect_single_object};
 	
 	$objects = $self->_normalize_objects($objects);
-	my $i = 0;
+print __FILE__, ' ', __LINE__, " _dispatch_name: objects=[$objects]\n";
 	my @objects;
+
+  if ($objects eq 'Wiki')
+  {
+    @objects= ('projects', shift (@args), 'wiki', ((@args) ? shift (@args) : 'index') );
+  }
+  else
+  {
+	my $i = 0;
 	while ($objects =~ /([A-Z][a-z]+)/g) {
 		my $object   = $self->_object($1);
 		my $category = $self->_category($object);
 		
+print __FILE__, ' ', __LINE__, " _dispatch_name: i=[$i] object=[$object] category=[$category]\n";
+
 		push @objects, $category;
 
 		next if $object eq $category;
 
 		my $is_last_object = pos($objects) == length($objects);
+print __FILE__, ' ', __LINE__, " _dispatch_name: i=[$i] is_last_object=[$is_last_object]\n";
 
 		# We need to attach an object ID to the path if an object is singular and
 		# we either perform anything but creation or we create a new object inside
 		# another object (e.g. createProjectMembership)
 		if ($action ne 'create' || !$is_last_object) {
 			my $object_id = $args[$i++];
+print __FILE__, ' ', __LINE__, " _dispatch_name: i=[$i] object_id=[$object_id]\n";
 
 			return $self->_set_client_error(
 				sprintf 'Incorrect object ID for %s in query %s', $object, $name
@@ -443,7 +499,9 @@ sub _dispatch_name
 
 		$self->_dispatch_last_object($action, $object, $data) if $is_last_object;
 	}
+	}
 	
+print __FILE__, ' ', __LINE__, " _dispatch_name: objects: ", main::Dumper (\@objects);
 	$data->{path} = join '/', @objects;
 
 	return $data;
